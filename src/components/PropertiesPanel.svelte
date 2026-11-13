@@ -1,10 +1,7 @@
 <script>
-  import {
-    currentArticle, articles, categories, tags, favorites, toggleFavorite, articleFolders
-  } from '../lib/stores.js';
-  import {
-    updateArticle, getAllArticles, deleteArticle, collectTags
-  } from '../lib/db.js';
+  import { currentArticle, articles, settings } from '../lib/stores.js';
+  import { updateArticle, getAllArticles, deleteArticle } from '../lib/db.js';
+  import { loadAll } from '../lib/data.js';
   import { exportMarkdown, exportTxt } from '../lib/export.js';
   import { formatDate } from '../lib/utils.js';
 
@@ -14,31 +11,26 @@
   let tagInput = $state('');
   let localTags = $state([]);
   let statusValue = $state('draft');
-  let folderValue = $state(null);
   let outlineTypeValue = $state('book');
 
+  const article = $derived($currentArticle);
+
   $effect(() => {
-    if ($currentArticle) {
-      titleValue = $currentArticle.title || '';
-      summaryValue = $currentArticle.summary || '';
-      notesValue = $currentArticle.notes || '';
-      localTags = [...($currentArticle.tags || [])];
-      statusValue = $currentArticle.status || 'draft';
-      folderValue = $currentArticle.folderId ?? null;
-      outlineTypeValue = $currentArticle.outlineType || 'book';
+    if (article) {
+      titleValue = article.title || '';
+      summaryValue = article.summary || '';
+      notesValue = article.notes || '';
+      localTags = [...(article.tags || [])];
+      statusValue = article.status || 'draft';
+      outlineTypeValue = article.outlineType || 'book';
     }
   });
 
   async function saveField(field, value) {
-    if (!$currentArticle) return;
-    await updateArticle($currentArticle.id, { [field]: value });
-    currentArticle.update(a => ({ ...a, [field]: value }));
-    const list = await getAllArticles();
-    articles.set(list);
-    if (field === 'tags') {
-      const tagList = await collectTags();
-      tags.set(tagList);
-    }
+    if (!article) return;
+    await updateArticle(article.id, { [field]: value });
+    currentArticle.update(a => a ? { ...a, [field]: value } : a);
+    await loadAll();
   }
 
   function handleTitleBlur() {
@@ -55,12 +47,6 @@
     saveField('status', statusValue);
   }
 
-  function handleFolderChange(e) {
-    const raw = e.target.value;
-    folderValue = raw === '' ? null : Number(raw);
-    saveField('folderId', folderValue);
-  }
-
   function handleOutlineTypeChange(e) {
     const v = e.target.value;
     outlineTypeValue = v;
@@ -69,8 +55,7 @@
 
   function addTag() {
     const t = tagInput.trim();
-    if (!t) { tagInput = ''; return; }
-    if (localTags.includes(t)) { tagInput = ''; return; }
+    if (!t || localTags.includes(t)) { tagInput = ''; return; }
     localTags = [...localTags, t];
     tagInput = '';
     saveField('tags', localTags);
@@ -81,38 +66,17 @@
     saveField('tags', localTags);
   }
 
-  async function handleDelete() {
-    if (!confirm('確定刪除這篇文章？')) return;
-    await deleteArticle($currentArticle.id);
-    const list = await getAllArticles();
-    articles.set(list);
-    currentArticle.set(list[0] || null);
-  }
-
   function handleExport(type) {
-    if (!$currentArticle) return;
-    if (type === 'md') exportMarkdown($currentArticle);
-    if (type === 'txt') exportTxt($currentArticle);
-  }
-
-  function handleFavorite() {
-    if (!$currentArticle) return;
-    toggleFavorite($currentArticle.id);
+    if (!article) return;
+    if (type === 'md') exportMarkdown(article);
+    if (type === 'txt') exportTxt(article);
   }
 </script>
 
-{#if $currentArticle}
+{#if article}
   <div class="panel">
     <div class="section">
-      <div class="header-row">
-        <label class="label">標題</label>
-        <button
-          class="fav-btn"
-          class:active={$favorites.has($currentArticle.id)}
-          onclick={handleFavorite}
-          title="我的最愛"
-        >{$favorites.has($currentArticle.id) ? '★' : '☆'}</button>
-      </div>
+      <label class="label">標題</label>
       <input
         class="input"
         bind:value={titleValue}
@@ -133,18 +97,6 @@
           onclick={() => { outlineTypeValue = 'game'; saveField('outlineType', 'game'); }}
         >🎮 遊戲</button>
       </div>
-    </div>
-
-    <div class="section">
-      <label class="label">資料夾</label>
-      <select class="select" value={folderValue ?? ''} onchange={handleFolderChange}>
-        <option value="">（無資料夾）</option>
-        {#each $articleFolders as f (f.id)}
-          <option value={f.id}>
-            {#if f.parentId}　└ {/if}{f.name}
-          </option>
-        {/each}
-      </select>
     </div>
 
     <div class="section">
@@ -202,8 +154,8 @@
     </div>
 
     <div class="section meta">
-      <div>建立：{formatDate($currentArticle.createdAt)}</div>
-      <div>更新：{formatDate($currentArticle.updatedAt)}</div>
+      <div>建立：{formatDate(article.createdAt)}</div>
+      <div>更新：{formatDate(article.updatedAt)}</div>
     </div>
 
     <div class="section">
@@ -212,10 +164,6 @@
         <button onclick={() => handleExport('md')}>📄 Markdown</button>
         <button onclick={() => handleExport('txt')}>📝 TXT</button>
       </div>
-    </div>
-
-    <div class="section">
-      <button class="delete-btn" onclick={handleDelete}>🗑 刪除文章</button>
     </div>
   </div>
 {/if}
@@ -228,12 +176,10 @@
     gap: 16px;
   }
 
-  .section { display: flex; flex-direction: column; gap: 6px; }
-
-  .header-row {
+  .section {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .label {
@@ -244,26 +190,13 @@
     letter-spacing: 0.5px;
   }
 
-  .fav-btn {
-    font-size: 16px;
-    color: var(--text-secondary);
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .fav-btn.active { color: #f59e0b; }
-  .fav-btn:hover { color: #f59e0b; }
-
   .input,
   .textarea,
   .select {
     width: 100%;
-    padding: 7px 10px;
+    padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg);
     font-size: 13px;
     color: var(--text);
@@ -273,11 +206,20 @@
 
   .input:focus,
   .textarea:focus,
-  .select:focus { border-color: var(--accent); }
+  .select:focus {
+    border-color: var(--accent);
+  }
 
-  .textarea { resize: vertical; line-height: 1.5; }
+  .textarea {
+    resize: vertical;
+    line-height: 1.5;
+  }
 
-  .input.small { flex: 1; padding: 5px 8px; font-size: 12px; }
+  .input.small {
+    flex: 1;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
 
   .type-toggle {
     display: flex;
@@ -285,13 +227,13 @@
     padding: 3px;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
   }
 
   .type-toggle button {
     flex: 1;
     padding: 6px 10px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 12px;
     color: var(--text-secondary);
   }
@@ -306,55 +248,70 @@
     color: white;
   }
 
-  .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
 
   .tag {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 2px 8px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    border-radius: var(--radius-full);
     font-size: 11px;
-    color: var(--text);
+    font-weight: 500;
   }
 
   .tag button {
-    color: var(--text-secondary);
+    color: var(--accent-text);
     font-size: 14px;
     line-height: 1;
+    opacity: 0.6;
   }
 
-  .tag button:hover { color: var(--danger); }
+  .tag button:hover {
+    opacity: 1;
+  }
 
-  .tag-input-row { display: flex; gap: 4px; }
+  .tag-input-row {
+    display: flex;
+    gap: 4px;
+  }
 
   .add-tag-btn {
     width: 28px;
     height: 28px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg);
     color: var(--text);
     font-size: 14px;
   }
 
-  .add-tag-btn:hover { background: var(--bg-hover); }
+  .add-tag-btn:hover {
+    background: var(--bg-hover);
+  }
 
   .meta {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     gap: 2px;
   }
 
-  .export-buttons { display: flex; gap: 6px; }
+  .export-buttons {
+    display: flex;
+    gap: 6px;
+  }
 
   .export-buttons button {
     flex: 1;
     padding: 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg);
     font-size: 12px;
     color: var(--text);
@@ -363,20 +320,5 @@
   .export-buttons button:hover {
     background: var(--bg-hover);
     border-color: var(--accent);
-  }
-
-  .delete-btn {
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--danger);
-    font-size: 12px;
-  }
-
-  .delete-btn:hover {
-    background: var(--danger);
-    color: white;
-    border-color: var(--danger);
   }
 </style>

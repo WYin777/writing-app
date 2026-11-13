@@ -60,6 +60,10 @@
           class:active={$appView === 'relations'}
           onclick={() => appView.set('relations')}
         >關係圖</button>
+	<button
+	  class:active={$appView === 'backup'}
+	  onclick={() => appView.set('backup')}
+	>備份</button>
       </nav>
     {/if}
   </div>
@@ -112,6 +116,10 @@
       class:active={$appView === 'relations'}
       onclick={() => appView.set('relations')}
     >🕸 關係</button>
+    <button
+      class:active={$appView === 'backup'}
+      onclick={() => appView.set('backup')}
+    >💾 備份</button>
   </div>
 {/if}
 

@@ -1,50 +1,86 @@
 <script>
   import { onMount } from 'svelte';
+  import { db } from './lib/db.js';
   import {
-    db, getAllArticles, collectTags, getFoldersByType
-  } from './lib/db.js';
-  import {
-    articles, theme, currentArticle, activeView, tags, appView,
-    articleFolders, characterFolders, timelineFolders, relationFolders, allFolders,
-    mobileSidebarOpen, mobilePropsOpen, isMobile
+    theme, appView, currentProject, currentArticle,
+    currentCharacter, currentTimelineEvent, currentRelation,
+    projects, articles, characters, timelineEvents, relations
   } from './lib/stores.js';
-  import TopBar from './components/TopBar.svelte';
-  import Sidebar from './components/Sidebar.svelte';
-  import ArticleList from './components/ArticleList.svelte';
-  import OutlineEditor from './components/OutlineEditor.svelte';
-  import GameOutlineEditor from './components/GameOutlineEditor.svelte';
-  import RichTextEditor from './components/RichTextEditor.svelte';
-  import PropertiesPanel from './components/PropertiesPanel.svelte';
-  import CharacterManager from './components/CharacterManager.svelte';
-  import TimelineManager from './components/TimelineManager.svelte';
-  import RelationManager from './components/RelationManager.svelte';
+  import { loadAll } from './lib/data.js';
+  import Home from './components/Home.svelte';
+  import ProjectPage from './components/ProjectPage.svelte';
+  import ArticlePage from './components/ArticlePage.svelte';
+  import CharacterPage from './components/CharacterPage.svelte';
+  import TimelinePage from './components/TimelinePage.svelte';
+  import RelationPage from './components/RelationPage.svelte';
+  import FavoritesPage from './components/FavoritesPage.svelte';
+  import BackupPage from './components/BackupPage.svelte';
 
-  onMount(async () => {
-    const settings = await db.settings.get('main');
-    if (settings?.theme) theme.set(settings.theme);
+  function saveNavState() {
+    if (typeof localStorage === 'undefined') return;
+    const state = {
+      appView: $appView,
+      projectId: $currentProject?.id || null,
+      articleId: $currentArticle?.id || null,
+      characterId: $currentCharacter?.id || null,
+      timelineId: $currentTimelineEvent?.id || null,
+      relationId: $currentRelation?.id || null
+    };
+    localStorage.setItem('nav_state', JSON.stringify(state));
+  }
 
-    const list = await getAllArticles();
-    articles.set(list);
+  function restoreNavState() {
+    if (typeof localStorage === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem('nav_state');
+      if (!raw) return false;
+      const state = JSON.parse(raw);
 
-    const tagList = await collectTags();
-    tags.set(tagList);
+      const proj = state.projectId ? $projects.find(p => p.id === state.projectId) : null;
+      if (!proj) return false;
+      currentProject.set(proj);
 
-    const [aFolders, cFolders, tFolders, rFolders] = await Promise.all([
-      getFoldersByType('article'),
-      getFoldersByType('character'),
-      getFoldersByType('timeline'),
-      getFoldersByType('relation')
-    ]);
-    articleFolders.set(aFolders);
-    characterFolders.set(cFolders);
-    timelineFolders.set(tFolders);
-    relationFolders.set(rFolders);
-    allFolders.set([...aFolders, ...cFolders, ...tFolders, ...rFolders]);
-
-    if (list.length > 0) {
-      currentArticle.set(list[0]);
+      if (state.appView === 'article' && state.articleId) {
+        const art = $articles.find(a => a.id === state.articleId);
+        if (art) {
+          currentArticle.set(art);
+          appView.set('article');
+          return true;
+        }
+      }
+      if (state.appView === 'character' && state.characterId) {
+        const c = $characters.find(x => x.id === state.characterId);
+        if (c) {
+          currentCharacter.set(c);
+          appView.set('character');
+          return true;
+        }
+      }
+      if (state.appView === 'timeline' && state.timelineId) {
+        const t = $timelineEvents.find(x => x.id === state.timelineId);
+        if (t) {
+          currentTimelineEvent.set(t);
+          appView.set('timeline');
+          return true;
+        }
+      }
+      if (state.appView === 'relation' && state.relationId) {
+        const r = $relations.find(x => x.id === state.relationId);
+        if (r) {
+          currentRelation.set(r);
+          appView.set('relation');
+          return true;
+        }
+      }
+      if (state.appView === 'project') {
+        appView.set('project');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
-  });
+  }
 
   async function toggleTheme() {
     const newTheme = $theme === 'light' ? 'dark' : 'light';
@@ -52,104 +88,56 @@
     await db.settings.update('main', { theme: newTheme });
   }
 
-  function closeMobilePanels() {
-    mobileSidebarOpen.set(false);
-    mobilePropsOpen.set(false);
-  }
+  onMount(async () => {
+    const settings = await db.settings.get('main');
+    if (settings?.theme) theme.set(settings.theme);
+    await loadAll();
+    restoreNavState();
+  });
+
+  $effect(() => {
+    $appView; $currentProject; $currentArticle;
+    $currentCharacter; $currentTimelineEvent; $currentRelation;
+    saveNavState();
+  });
 </script>
 
 <div class="app">
-  <TopBar onToggleTheme={toggleTheme} />
-
-  {#if $appView === 'articles'}
-    <div class="main">
-      <!-- 左側欄：桌面顯示，手機抽屜 -->
-      {#if !$isMobile}
-        <aside class="left">
-          <Sidebar />
-          <ArticleList />
-        </aside>
-      {:else if $mobileSidebarOpen}
-        <div class="mobile-overlay" onclick={closeMobilePanels}></div>
-        <aside class="mobile-drawer left">
-          <Sidebar />
-          <ArticleList />
-        </aside>
-      {/if}
-
-      <section class="center">
-        {#if $currentArticle}
-          <div class="view-tabs">
-            <button
-              class:active={$activeView === 'outline'}
-              onclick={() => activeView.set('outline')}
-            >大綱</button>
-            <button
-              class:active={$activeView === 'content'}
-              onclick={() => activeView.set('content')}
-            >正文</button>
-            {#if $isMobile}
-              <button
-                class="mobile-props-btn"
-                onclick={() => mobilePropsOpen.set(true)}
-              >⚙ 屬性</button>
-            {/if}
-          </div>
-
-          <div class="editor-area" class:with-editor={$activeView === 'content'}>
-            {#if $activeView === 'outline'}
-              {#if $currentArticle.outlineType === 'game'}
-                <GameOutlineEditor />
-              {:else}
-                <OutlineEditor />
-              {/if}
-            {:else}
-              <RichTextEditor />
-            {/if}
-          </div>
-        {:else}
-          <div class="empty">
-            <p>還沒有文章</p>
-            <p class="hint">點右上角「＋新增」開始寫作</p>
-          </div>
-        {/if}
-      </section>
-
-      <!-- 右側屬性面板：桌面顯示，手機底部彈出 -->
-      {#if !$isMobile}
-        <aside class="right">
-          {#if $currentArticle}
-            <PropertiesPanel />
-          {/if}
-        </aside>
-      {:else if $mobilePropsOpen}
-        <div class="mobile-overlay" onclick={closeMobilePanels}></div>
-        <aside class="mobile-bottom-panel">
-          <div class="panel-header">
-            <span>文章屬性</span>
-            <button class="close-btn" onclick={() => mobilePropsOpen.set(false)}>×</button>
-          </div>
-          <div class="panel-body">
-            {#if $currentArticle}
-              <PropertiesPanel />
-            {/if}
-          </div>
-        </aside>
-      {/if}
+  <header class="topbar">
+    <div class="left">
+      <span class="logo">📝 我的寫作庫</span>
     </div>
-  {:else if $appView === 'characters'}
-    <div class="full-view">
-      <CharacterManager />
+    <div class="right">
+      <button class="top-btn" onclick={() => appView.set('home')}>🏠 首頁</button>
+      <button class="top-btn" onclick={() => appView.set('favorites')}>⭐ 最愛</button>
+      <button class="top-btn" onclick={() => appView.set('backup')}>💾 備份</button>
+      <button class="top-btn theme-btn" onclick={toggleTheme}>
+        {$theme === 'light' ? '🌙' : '☀️'}
+      </button>
     </div>
-  {:else if $appView === 'timeline'}
-    <div class="full-view">
-      <TimelineManager />
-    </div>
-  {:else if $appView === 'relations'}
-    <div class="full-view">
-      <RelationManager />
-    </div>
-  {/if}
+  </header>
+
+  <main class="main">
+    {#if $appView === 'home'}
+      <Home />
+    {:else if $appView === 'project'}
+      <ProjectPage />
+    {:else if $appView === 'article'}
+      <ArticlePage />
+    {:else if $appView === 'character'}
+      <CharacterPage />
+    {:else if $appView === 'timeline'}
+      <TimelinePage />
+    {:else if $appView === 'relation'}
+      <RelationPage />
+    {:else if $appView === 'favorites'}
+      <FavoritesPage />
+    {:else if $appView === 'backup'}
+      <BackupPage />
+    {:else}
+      <div class="coming">這個頁面不存在</div>
+    {/if}
+  </main>
 </div>
 
 <style>
@@ -157,199 +145,74 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+  }
+
+  .topbar {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+    gap: 12px;
+  }
+
+  .logo {
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .right {
+    display: flex;
+    gap: 4px;
+  }
+
+  .top-btn {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .top-btn:hover {
+    background: var(--bg-hover);
+  }
+
+  .theme-btn {
+    width: 36px;
+    padding: 6px;
   }
 
   .main {
     flex: 1;
-    display: flex;
-    overflow: hidden;
-    position: relative;
+    overflow: auto;
   }
 
-  .full-view {
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .left {
-    width: 260px;
-    border-right: 1px solid var(--border);
-    background: var(--bg-secondary);
+  .coming {
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    flex-shrink: 0;
-  }
-
-  .center {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-width: 0;
-  }
-
-  .view-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
     align-items: center;
-    flex-shrink: 0;
-  }
-
-  .view-tabs button {
-    padding: 6px 14px;
-    border-radius: var(--radius);
+    justify-content: center;
+    height: 100%;
     color: var(--text-secondary);
     font-size: 14px;
-  }
-
-  .view-tabs button.active {
-    background: var(--bg-hover);
-    color: var(--text);
-    font-weight: 500;
-  }
-
-  .mobile-props-btn {
-    margin-left: auto;
-    color: var(--accent) !important;
-    font-size: 13px !important;
-  }
-
-  .editor-area {
-    flex: 1;
-    overflow: auto;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-  }
-
-  .editor-area.with-editor {
-    align-items: stretch;
-    justify-content: stretch;
-  }
-
-  .right {
-    width: 280px;
-    border-left: 1px solid var(--border);
-    background: var(--bg-secondary);
-    overflow: auto;
-    flex-shrink: 0;
-  }
-
-  .empty {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    gap: 8px;
-    padding: 24px;
-    text-align: center;
-  }
-
-  .hint {
-    font-size: 13px;
-  }
-
-  /* 手機版 */
-  .mobile-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 100;
-    animation: fadeIn 0.2s ease;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .mobile-drawer {
-    position: fixed;
-    top: 52px;
-    left: 0;
-    bottom: 0;
-    width: 280px;
-    max-width: 85vw;
-    background: var(--bg-secondary);
-    z-index: 101;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: 2px 0 12px rgba(0,0,0,0.15);
-    animation: slideInLeft 0.25s ease;
-  }
-
-  @keyframes slideInLeft {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(0); }
-  }
-
-  .mobile-bottom-panel {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    max-height: 80vh;
-    background: var(--bg-secondary);
-    z-index: 101;
-    border-radius: 16px 16px 0 0;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
-    animation: slideUp 0.25s ease;
-  }
-
-  @keyframes slideUp {
-    from { transform: translateY(100%); }
-    to { transform: translateY(0); }
-  }
-
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-    font-weight: 600;
-    flex-shrink: 0;
-  }
-
-  .close-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    font-size: 20px;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .close-btn:hover {
-    background: var(--bg-hover);
-  }
-
-  .panel-body {
-    flex: 1;
-    overflow-y: auto;
   }
 
   @media (max-width: 768px) {
-    .view-tabs {
-      padding: 6px 12px;
+    .topbar {
+      padding: 0 8px;
+      gap: 4px;
     }
 
-    .view-tabs button {
-      padding: 8px 16px;
-      font-size: 15px;
-      min-height: 40px;
+    .logo {
+      font-size: 13px;
+    }
+
+    .top-btn {
+      padding: 6px 6px;
+      font-size: 11px;
     }
   }
 </style>

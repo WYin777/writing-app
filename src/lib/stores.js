@@ -1,43 +1,7 @@
 import { writable, derived } from 'svelte/store';
 
-export const currentArticle = writable(null);
-export const articles = writable([]);
-export const categories = writable([]);
-export const tags = writable([]);
+// ── 主題 ──
 export const theme = writable('light');
-export const searchQuery = writable('');
-export const activeView = writable('outline');
-export const sidebarOpen = writable(true);
-export const relationFolders = writable([]);
-export const relationFolderFilter = writable(null);
-
-// 篩選
-export const filterType = writable('all');           // all / favorite / folder / tag
-export const filterFolderId = writable(null);
-export const filterTag = writable(null);
-export const favorites = writable(new Set());
-
-// 檢視
-export const appView = writable('articles');
-
-// 資料夾
-export const articleFolders = writable([]);
-export const characterFolders = writable([]);
-export const timelineFolders = writable([]);
-
-// 載入我的最愛
-if (typeof localStorage !== 'undefined') {
-  try {
-    const stored = JSON.parse(localStorage.getItem('favorites') || '[]');
-    favorites.set(new Set(stored));
-  } catch (e) {}
-}
-
-favorites.subscribe(value => {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('favorites', JSON.stringify([...value]));
-  }
-});
 
 theme.subscribe(value => {
   if (typeof document !== 'undefined') {
@@ -45,83 +9,151 @@ theme.subscribe(value => {
   }
 });
 
-// 文章篩選
-export const filteredArticles = derived(
-  [articles, searchQuery, filterType, filterFolderId, filterTag, favorites],
-  ([$articles, $query, $type, $folderId, $tag, $favs]) => {
-    let list = $articles;
+// ── 全域資料 ──
+export const projects = writable([]);
+export const currentProject = writable(null);
+export const articles = writable([]);
+export const characters = writable([]);
+export const timelineEvents = writable([]);
+export const relations = writable([]);
+export const settings = writable({});
 
-    if ($type === 'favorite') {
-      list = list.filter(a => $favs.has(a.id));
-    } else if ($type === 'folder') {
-      list = list.filter(a => a.folderId === $folderId);
-    } else if ($type === 'tag') {
-      list = list.filter(a => (a.tags || []).includes($tag));
-    }
+// ── 當前選中 ──
+export const currentArticle = writable(null);
+export const currentCharacter = writable(null);
+export const currentTimelineEvent = writable(null);
+export const currentRelation = writable(null);
 
-    if ($query.trim()) {
-      const q = $query.toLowerCase();
-      list = list.filter(a =>
-        a.title.toLowerCase().includes(q) ||
-        (a.summary || '').toLowerCase().includes(q) ||
-        (a.tags || []).some(t => t.toLowerCase().includes(q))
-      );
-    }
+// ── 檢視狀態 ──
+export const appView = writable('home');           // home / project / favorites / settings
+export const projectTab = writable('articles');    // articles / characters / timeline / relations
+export const activeView = writable('outline');     // outline / content
+export const searchQuery = writable('');
 
-    return list;
-  }
-);
-
-export function resetFilter() {
-  filterType.set('all');
-  filterFolderId.set(null);
-  filterTag.set(null);
-}
-
-export function toggleFavorite(articleId) {
-  favorites.update(set => {
-    const newSet = new Set(set);
-    if (newSet.has(articleId)) newSet.delete(articleId);
-    else newSet.add(articleId);
-    return newSet;
-  });
-}
-
-// 所有資料夾（三類合併）
-export const allFolders = writable([]);
-
-// 跨頁切換：點資料夾時觸發
-export function openFolder(folder) {
-  if (!folder) return;
-  if (folder.type === 'article') {
-    appView.set('articles');
-    filterType.set('folder');
-    filterFolderId.set(folder.id);
-    filterTag.set(null);
-  } else if (folder.type === 'character') {
-    appView.set('characters');
-    characterFolderFilter.set(folder.id);
-  } else if (folder.type === 'timeline') {
-    appView.set('timeline');
-    timelineFolderFilter.set(folder.id);
-  } else if (folder.type === 'relation') {
-    appView.set('relations');
-    relationFolderFilter.set(folder.id);
-  }
-}
-
-// 需要新增這兩個 store（如果還沒有）
-export const characterFolderFilter = writable(null);
-export const timelineFolderFilter = writable(null);
-
-// 手機版 UI 狀態
-export const mobileSidebarOpen = writable(false);   // 左側抽屜
-export const mobilePropsOpen = writable(false);     // 右側屬性面板（底部彈出）
+// ── 手機 UI ──
+export const mobileSidebarOpen = writable(false);
+export const mobilePropsOpen = writable(false);
 export const isMobile = writable(false);
 
-// 偵測螢幕尺寸
 if (typeof window !== 'undefined') {
   const mq = window.matchMedia('(max-width: 768px)');
   isMobile.set(mq.matches);
   mq.addEventListener('change', (e) => isMobile.set(e.matches));
+}
+
+// ── 專案統計（給專案卡片用）──
+export const projectStats = derived(
+  [projects, articles, characters, timelineEvents, relations],
+  ([$projects, $articles, $characters, $timeline, $relations]) => {
+    return $projects.map(p => ({
+      ...p,
+      articleCount: $articles.filter(a => a.projectId === p.id).length,
+      characterCount: $characters.filter(c => c.projectId === p.id).length,
+      timelineCount: $timeline.filter(t => t.projectId === p.id).length,
+      relationCount: $relations.filter(r => r.projectId === p.id).length
+    }));
+  }
+);
+
+// ── 當前專案的文章 ──
+export const currentProjectArticles = derived(
+  [currentProject, articles],
+  ([$currentProject, $articles]) => {
+    if (!$currentProject) return [];
+    return $articles
+      .filter(a => a.projectId === $currentProject.id)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+);
+
+export const currentProjectCharacters = derived(
+  [currentProject, characters],
+  ([$currentProject, $characters]) => {
+    if (!$currentProject) return [];
+    return $characters.filter(c => c.projectId === $currentProject.id);
+  }
+);
+
+export const currentProjectTimeline = derived(
+  [currentProject, timelineEvents],
+  ([$currentProject, $timeline]) => {
+    if (!$currentProject) return [];
+    return $timeline
+      .filter(t => t.projectId === $currentProject.id)
+      .sort((a, b) => (a.timeOrder || 0) - (b.timeOrder || 0));
+  }
+);
+
+export const currentProjectRelations = derived(
+  [currentProject, relations],
+  ([$currentProject, $relations]) => {
+    if (!$currentProject) return [];
+    return $relations.filter(r => r.projectId === $currentProject.id);
+  }
+);
+
+// ── 我的最愛（跨專案）──
+export const favoriteArticles = derived(articles, $articles =>
+  $articles.filter(a => a.favorite)
+);
+export const favoriteCharacters = derived(characters, $characters =>
+  $characters.filter(c => c.favorite)
+);
+export const favoriteTimeline = derived(timelineEvents, $timeline =>
+  $timeline.filter(t => t.favorite)
+);
+export const favoriteRelations = derived(relations, $relations =>
+  $relations.filter(r => r.favorite)
+);
+
+// ── 最近編輯 ──
+export const recentEdits = derived(
+  [projects, articles, characters, timelineEvents, relations],
+  ([$projects, $articles, $characters, $timeline, $relations]) => {
+    const items = [];
+
+    for (const a of $articles) {
+      const proj = $projects.find(p => p.id === a.projectId);
+      if (proj) {
+        items.push({
+          type: 'article',
+          projectId: a.projectId,
+          projectName: proj.name,
+          id: a.id,
+          title: a.title,
+          updatedAt: a.updatedAt
+        });
+      }
+    }
+
+    for (const c of $characters) {
+      const proj = $projects.find(p => p.id === c.projectId);
+      if (proj) {
+        items.push({
+          type: 'character',
+          projectId: c.projectId,
+          projectName: proj.name,
+          id: c.id,
+          title: c.name,
+          updatedAt: c.updatedAt
+        });
+      }
+    }
+
+    return items.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
+  }
+);
+
+// ── 工具函式 ──
+export function toggleFavorite(type, item) {
+  if (type === 'article') {
+    articles.update(list => list.map(x => x.id === item.id ? { ...x, favorite: !x.favorite } : x));
+    currentArticle.update(a => a && a.id === item.id ? { ...a, favorite: !a.favorite } : a);
+  } else if (type === 'character') {
+    characters.update(list => list.map(x => x.id === item.id ? { ...x, favorite: !x.favorite } : x));
+  } else if (type === 'timeline') {
+    timelineEvents.update(list => list.map(x => x.id === item.id ? { ...x, favorite: !x.favorite } : x));
+  } else if (type === 'relation') {
+    relations.update(list => list.map(x => x.id === item.id ? { ...x, favorite: !x.favorite } : x));
+  }
 }
