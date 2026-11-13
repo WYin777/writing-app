@@ -5,8 +5,14 @@
   } from '../lib/stores.js';
   import { db } from '../lib/db.js';
   import { loadAll } from '../lib/data.js';
+  import { formatDate } from '../lib/utils.js';
 
   const evt = $derived($currentTimelineEvent);
+
+  let editMode = $state(false);
+  let saving = $state(false);
+  let errorMsg = $state('');
+  let imageUrlInput = $state('');
 
   let form = $state({
     title: '',
@@ -18,10 +24,6 @@
     images: [],
     notes: ''
   });
-
-  let saving = $state(false);
-  let errorMsg = $state('');
-  let imageUrlInput = $state('');
 
   $effect(() => {
     if (evt) {
@@ -45,6 +47,25 @@
 
   function selectEvt(e) {
     currentTimelineEvent.set(e);
+    editMode = false;
+  }
+
+  function startEdit() { editMode = true; }
+
+  function cancelEdit() {
+    editMode = false;
+    if (evt) {
+      form = {
+        title: evt.title || '',
+        time: evt.time || '',
+        timeOrder: evt.timeOrder || 0,
+        location: evt.location || '',
+        characterIds: [...(evt.characterIds || [])],
+        description: evt.description || '',
+        images: [...(evt.images || [])],
+        notes: evt.notes || ''
+      };
+    }
   }
 
   async function save() {
@@ -56,7 +77,7 @@
     }
     saving = true;
     try {
-      await db.timelineEvents.update(evt.id, {
+      const payload = JSON.parse(JSON.stringify({
         title: form.title.trim(),
         time: form.time.trim(),
         timeOrder: Number(form.timeOrder) || 0,
@@ -66,9 +87,11 @@
         images: [...(form.images || [])],
         notes: form.notes.trim(),
         updatedAt: Date.now()
-      });
+      }));
+      await db.timelineEvents.update(evt.id, payload);
       await loadAll();
-      currentTimelineEvent.update(e => ({ ...e, ...form }));
+      currentTimelineEvent.update(e => ({ ...e, ...payload }));
+      editMode = false;
     } catch (e) {
       console.error('儲存失敗', e);
       errorMsg = '儲存失敗：' + (e?.message || e);
@@ -132,10 +155,16 @@
           onclick={toggleFavorite}
           title="我的最愛"
         >{evt.favorite ? '⭐' : '☆'}</button>
-        <button class="btn danger" onclick={handleDelete}>🗑 刪除</button>
-        <button class="btn primary" onclick={save} disabled={saving}>
-          {saving ? '儲存中...' : '💾 儲存'}
-        </button>
+
+        {#if editMode}
+          <button class="btn" onclick={cancelEdit}>取消</button>
+          <button class="btn primary" onclick={save} disabled={saving}>
+            {saving ? '儲存中...' : '💾 儲存'}
+          </button>
+        {:else}
+          <button class="btn danger" onclick={handleDelete}>🗑 刪除</button>
+          <button class="btn primary" onclick={startEdit}>✏ 編輯</button>
+        {/if}
       </div>
     </div>
 
@@ -158,79 +187,147 @@
         {/each}
       </aside>
 
-      <div class="form-area">
-        <div class="field">
-          <label>事件名稱 *</label>
-          <input bind:value={form.title} placeholder="例如：主角出生、初次相遇" />
-        </div>
+      <div class="content-area">
+        {#if editMode}
+          <div class="form-area">
+            <div class="field">
+              <label>事件名稱 *</label>
+              <input bind:value={form.title} placeholder="例如：主角出生、初次相遇" />
+            </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label>時間（顯示）</label>
-            <input bind:value={form.time} placeholder="例如：故事前 24 年、第 3 天早晨" />
+            <div class="field-row">
+              <div class="field">
+                <label>時間（顯示）</label>
+                <input bind:value={form.time} placeholder="例如：故事前 24 年、第 3 天早晨" />
+              </div>
+              <div class="field">
+                <label>排序值（數字，小到大）</label>
+                <input type="number" bind:value={form.timeOrder} placeholder="0" />
+              </div>
+            </div>
+
+            <div class="field">
+              <label>地點</label>
+              <input bind:value={form.location} placeholder="北方小鎮、王城..." />
+            </div>
+
+            {#if $currentProjectCharacters.length > 0}
+              <div class="field">
+                <label>參與角色</label>
+                <div class="char-chips">
+                  {#each $currentProjectCharacters as c (c.id)}
+                    <button
+                      class="chip"
+                      class:active={(form.characterIds || []).includes(c.id)}
+                      onclick={() => toggleCharacter(c.id)}
+                    >
+                      {#if c.avatar}
+                        <img src={c.avatar} alt={c.name} class="chip-avatar" />
+                      {/if}
+                      {c.name}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <div class="field">
+              <label>描述</label>
+              <textarea bind:value={form.description} rows="4" placeholder="事件經過..."></textarea>
+            </div>
+
+            <div class="field">
+              <label>圖片（網址）</label>
+              <div class="image-url-row">
+                <input
+                  bind:value={imageUrlInput}
+                  placeholder="貼上圖片網址..."
+                  onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addImageUrl())}
+                />
+                <button class="add-btn" onclick={addImageUrl}>＋</button>
+              </div>
+              {#if (form.images || []).length > 0}
+                <div class="image-grid">
+                  {#each form.images as img, i}
+                    <div class="image-thumb">
+                      <img src={img} alt="" />
+                      <button onclick={() => removeImage(i)}>×</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="field">
+              <label>備註</label>
+              <textarea bind:value={form.notes} rows="2" placeholder="其他備註..."></textarea>
+            </div>
           </div>
-          <div class="field">
-            <label>排序值（數字，小到大）</label>
-            <input type="number" bind:value={form.timeOrder} placeholder="0" />
-          </div>
-        </div>
+        {:else}
+          <div class="view-area">
+            <div class="view-header">
+              <div>
+                <h1>{evt.title}</h1>
+                {#if evt.time}<p class="time-label">⏳ {evt.time}</p>{/if}
+              </div>
+            </div>
 
-        <div class="field">
-          <label>地點</label>
-          <input bind:value={form.location} placeholder="北方小鎮、王城..." />
-        </div>
+            {#if evt.location}
+              <div class="view-section">
+                <h3>地點</h3>
+                <p>📍 {evt.location}</p>
+              </div>
+            {/if}
 
-        {#if $currentProjectCharacters.length > 0}
-          <div class="field">
-            <label>參與角色</label>
-            <div class="char-chips">
-              {#each $currentProjectCharacters as c (c.id)}
-                <button
-                  class="chip"
-                  class:active={(form.characterIds || []).includes(c.id)}
-                  onclick={() => toggleCharacter(c.id)}
-                >
-                  {#if c.avatar}
-                    <img src={c.avatar} alt={c.name} class="chip-avatar" />
-                  {/if}
-                  {c.name}
-                </button>
-              {/each}
+            {#if evt.characterIds?.length}
+              <div class="view-section">
+                <h3>參與角色</h3>
+                <div class="char-chips">
+                  {#each evt.characterIds as cid}
+                    <span class="chip-static">
+                      {#if charAvatar(cid)}
+                        <img src={charAvatar(cid)} alt={charName(cid)} class="chip-avatar" />
+                      {/if}
+                      {charName(cid)}
+                    </span>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            {#if evt.description}
+              <div class="view-section">
+                <h3>描述</h3>
+                <p>{evt.description}</p>
+              </div>
+            {/if}
+
+            {#if evt.images?.length}
+              <div class="view-section">
+                <h3>圖片</h3>
+                <div class="image-grid">
+                  {#each evt.images as img}
+                    <div class="image-thumb">
+                      <img src={img} alt="" />
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            {#if evt.notes}
+              <div class="view-section">
+                <h3>備註</h3>
+                <p>{evt.notes}</p>
+              </div>
+            {/if}
+
+            <div class="view-meta">
+              <span>建立：{formatDate(evt.createdAt)}</span>
+              <span>更新：{formatDate(evt.updatedAt)}</span>
             </div>
           </div>
         {/if}
-
-        <div class="field">
-          <label>描述</label>
-          <textarea bind:value={form.description} rows="4" placeholder="事件經過..."></textarea>
-        </div>
-
-        <div class="field">
-          <label>圖片（網址）</label>
-          <div class="image-url-row">
-            <input
-              bind:value={imageUrlInput}
-              placeholder="貼上圖片網址..."
-              onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addImageUrl())}
-            />
-            <button class="add-btn" onclick={addImageUrl}>＋</button>
-          </div>
-          {#if (form.images || []).length > 0}
-            <div class="image-grid">
-              {#each form.images as img, i}
-                <div class="image-thumb">
-                  <img src={img} alt="" />
-                  <button onclick={() => removeImage(i)}>×</button>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="field">
-          <label>備註</label>
-          <textarea bind:value={form.notes} rows="2" placeholder="其他備註..."></textarea>
-        </div>
       </div>
     </div>
   </div>
@@ -266,16 +363,9 @@
     max-width: 200px;
   }
 
-  .back-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
+  .back-btn:hover { background: var(--bg-hover); color: var(--text); }
 
-  .actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
+  .actions { display: flex; gap: 6px; flex-shrink: 0; }
 
   .btn {
     padding: 7px 14px;
@@ -288,42 +378,14 @@
     white-space: nowrap;
   }
 
-  .btn:hover {
-    background: var(--bg-hover);
-  }
-
-  .btn.primary {
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
-  }
-
-  .btn.primary:hover {
-    background: var(--accent-hover);
-  }
-
-  .btn.danger {
-    color: var(--danger);
-  }
-
-  .btn.danger:hover {
-    background: var(--danger-soft);
-  }
-
-  .btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .btn.icon-only {
-    padding: 7px 10px;
-    font-size: 14px;
-  }
-
-  .btn.active {
-    color: var(--warning);
-    border-color: var(--warning);
-  }
+  .btn:hover { background: var(--bg-hover); }
+  .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn.danger { color: var(--danger); }
+  .btn.danger:hover { background: var(--danger-soft); }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn.icon-only { padding: 7px 10px; font-size: 14px; }
+  .btn.active { color: var(--warning); border-color: var(--warning); }
 
   .error-msg {
     padding: 10px 16px;
@@ -333,11 +395,7 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .body {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-  }
+  .body { flex: 1; display: flex; overflow: hidden; }
 
   .evt-list {
     width: 220px;
@@ -354,14 +412,8 @@
     position: relative;
   }
 
-  .evt-item:hover {
-    background: var(--bg-hover);
-  }
-
-  .evt-item.active {
-    background: var(--bg-hover);
-    border-left-color: var(--accent);
-  }
+  .evt-item:hover { background: var(--bg-hover); }
+  .evt-item.active { background: var(--bg-hover); border-left-color: var(--accent); }
 
   .evt-time {
     font-size: 10px;
@@ -379,16 +431,11 @@
     text-overflow: ellipsis;
   }
 
-  .fav {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    font-size: 11px;
-  }
+  .fav { position: absolute; top: 8px; right: 8px; font-size: 11px; }
+
+  .content-area { flex: 1; overflow-y: auto; }
 
   .form-area {
-    flex: 1;
-    overflow-y: auto;
     padding: 24px;
     max-width: 720px;
     margin: 0 auto;
@@ -398,20 +445,9 @@
     gap: 16px;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .field-row {
-    display: flex;
-    gap: 10px;
-  }
-
-  .field-row > .field {
-    flex: 1;
-  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field-row { display: flex; gap: 10px; }
+  .field-row > .field { flex: 1; }
 
   .field label {
     font-size: 11px;
@@ -434,20 +470,11 @@
   }
 
   .field input:focus,
-  .field textarea:focus {
-    border-color: var(--accent);
-  }
+  .field textarea:focus { border-color: var(--accent); }
 
-  .field textarea {
-    resize: vertical;
-    line-height: 1.5;
-  }
+  .field textarea { resize: vertical; line-height: 1.5; }
 
-  .char-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
+  .char-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 
   .chip {
     display: inline-flex;
@@ -461,14 +488,24 @@
     font-size: 12px;
   }
 
-  .chip:hover {
-    border-color: var(--accent);
-  }
+  .chip:hover { border-color: var(--accent); }
 
   .chip.active {
     background: var(--accent);
     color: white;
     border-color: var(--accent);
+  }
+
+  .chip-static {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 500;
   }
 
   .chip-avatar {
@@ -478,14 +515,8 @@
     object-fit: cover;
   }
 
-  .image-url-row {
-    display: flex;
-    gap: 4px;
-  }
-
-  .image-url-row input {
-    flex: 1;
-  }
+  .image-url-row { display: flex; gap: 4px; }
+  .image-url-row input { flex: 1; }
 
   .add-btn {
     width: 32px;
@@ -496,16 +527,9 @@
     font-size: 14px;
   }
 
-  .add-btn:hover {
-    background: var(--bg-hover);
-  }
+  .add-btn:hover { background: var(--bg-hover); }
 
-  .image-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 6px;
-  }
+  .image-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 
   .image-thumb {
     position: relative;
@@ -516,11 +540,7 @@
     overflow: hidden;
   }
 
-  .image-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
+  .image-thumb img { width: 100%; height: 100%; object-fit: cover; }
 
   .image-thumb button {
     position: absolute;
@@ -537,49 +557,82 @@
     justify-content: center;
   }
 
-  @media (max-width: 768px) {
-  .body {
-    flex-direction: column;
+  /* 檢視 */
+  .view-area {
+    padding: 32px 24px;
+    max-width: 720px;
+    margin: 0 auto;
   }
 
-  .evt-list {
-    width: 100%;
-    max-height: 100px;
-    display: flex;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: none;
+  .view-header {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
     border-bottom: 1px solid var(--border);
   }
 
-  .evt-item {
-    min-width: 120px;
-    padding: 8px;
-    border-left: none;
-    border-bottom: 3px solid transparent;
+  .view-header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
   }
 
-  .evt-item.active {
-    border-left: none;
-    border-bottom-color: var(--accent);
+  .time-label {
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
   }
 
-  .form-area {
-    padding: 16px;
-  }
+  .view-section { margin-bottom: 20px; }
 
-  .back-btn {
-    max-width: 100px;
+  .view-section h3 {
     font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
   }
 
-  .btn {
-    padding: 6px 10px;
-    font-size: 12px;
+  .view-section p {
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: var(--text);
   }
 
-  .btn.danger {
-    display: none;
+  .view-meta {
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
-}
+
+  @media (max-width: 768px) {
+    .body { flex-direction: column; }
+    .evt-list {
+      width: 100%;
+      max-height: 100px;
+      display: flex;
+      overflow-x: auto;
+      overflow-y: hidden;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .evt-item {
+      min-width: 120px;
+      padding: 8px;
+      border-left: none;
+      border-bottom: 3px solid transparent;
+    }
+    .evt-item.active { border-left: none; border-bottom-color: var(--accent); }
+    .form-area { padding: 16px; }
+    .back-btn { max-width: 100px; font-size: 12px; }
+    .btn { padding: 6px 10px; font-size: 12px; }
+    .btn.danger { display: none; }
+    .view-area { padding: 20px 16px; }
+  }
 </style>
